@@ -1,0 +1,115 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Sep  1 18:35:14 2020
+
+@author: gaby_
+"""
+
+import xarray as xr
+import pandas as pd
+import numpy as np
+from scipy.sparse import csr_matrix
+import scipy.sparse
+from scipy.sparse.linalg import eigsh
+
+
+coordenadas_tsm = pd.read_csv("C:/Users/gaby_/OneDrive/Documentos/Resultado_Artigo/coord_tsm.csv")
+ds = xr.open_mfdataset("D:/horaio_campos_santos/ERA5_wind_*.nc")
+
+pontos = []
+w=0
+while w < len(coordenadas_tsm):
+    pontos.append((coordenadas_tsm['longitude'][w],coordenadas_tsm['latitude'][w]))
+    w=w+1
+
+##criando dataframe com a série temporal dos dados
+matriz_complexa = pd.DataFrame(columns=pontos)
+i=0
+for ponto in pontos:
+#separar pontos
+    lon,lat = ponto
+    print(lon,lat)
+#selecionando um ponto específico e transfomando em dataframe
+    pt=ds.sel(longitude=lon,latitude=lat,method='nearest').to_dataframe()
+    pt['complexo'] = pt.iloc[:,2]+pt.iloc[:,3]*1j
+    #print(pt)   
+    matriz_complexa.iloc[:,i]=pt['complexo'].values
+    i=i+1
+
+matriz_arr = scipy.sparse.csr_matrix(np.array(matriz_complexa,dtype='complex'))
+media = csr_matrix.mean(matriz_arr, axis=0)
+print(media)
+desvio = csr_matrix(matriz_arr-media)                       
+
+transposta = csr_matrix.getH(desvio)
+linhas, colunas = desvio.shape
+matriz_covariancia =(transposta*desvio)/linhas
+auto_valores, auto_vetores = eigsh(matriz_covariancia)
+indx = auto_valores.argsort()[::-1]
+auto_valores = auto_valores[indx]
+auto_vetores = auto_vetores[:,indx]
+auto_valores = np.diag(auto_valores)
+auto_vetores = auto_vetores[:,0:3]
+porcentagem = (np.dot(auto_valores,100)/(np.sum(auto_valores)))
+pcs = csr_matrix.dot(desvio,auto_vetores)
+
+##########################################################
+
+pd.DataFrame(porcentagem).to_excel('D:/horaio_campos_santos/ACP/porcentagem.xlsx',index=False)
+
+'''separando real de imaginário(u e v) '''
+
+cpu = pd.DataFrame(auto_vetores.real)
+cpv = pd.DataFrame(auto_vetores.imag)
+
+cpu.columns = ['cp_u1','cp_u2','cp_u3']
+cpv.columns = ['cp_v1','cp_v2','cp_v3']
+
+cpu.to_csv("D:/horaio_campos_santos/ACP/cp_u.csv",index=False)
+cpv.to_csv("D:/horaio_campos_santos/ACP/cp_v.csv",index=False)
+componentes = pd.concat([cpu,cpv,coordenadas_tsm],axis=1)
+componentes.to_excel("D:/horaio_campos_santos/ACP/cps_uv.xlsx",index=False)
+
+####################################################################################################
+
+#comp = pd.DataFrame(pcs)
+#autovalor = pd.DataFrame(auto_valores)
+#autovetor = pd.DataFrame(auto_vetores)
+
+#comp.to_csv('D:/15anos_1990_2004/componentes_complexas.csv',index=False)
+#autovalor.to_csv('D:/15anos_1990_2004/auto_valor.csv',index=False)
+#autovetor.to_csv('D:/15anos_1990_2004/auto_vetor.csv',index=False)
+
+######################################## MAPA    ############################################
+
+import cartopy.crs as ccrs
+from cartopy.io.shapereader import Reader
+from cartopy.feature import ShapelyFeature
+import matplotlib.pyplot as plt
+import cartopy.feature as cfeature
+%matplotlib auto
+
+componentes['time'] = '2009-12-01 00:00'
+componentes = componentes.set_index(['latitude','longitude','time'])
+
+componentes = componentes.to_xarray()
+componentes.to_netcdf("D:/horaio_campos_santos/ACP/componentes_netcdf.nc")
+
+'''mapa para as componentes'''
+
+'''mapa vetor'''
+#ds = xr.open_mfdataset("D:/15anos_1990_2004/componentes.nc")
+
+lons,lats = np.meshgrid(componentes.longitude,componentes.latitude)
+compo1 = componentes.sel(time='2009-12-01 00:00')
+
+skip=2
+ax = plt.axes(projection=ccrs.PlateCarree())
+ax.set_extent([-50,-36,-20,-29])
+q=ax.quiver(lons[::skip,::skip],lats[::skip,::skip],(compo1['cp_u3']*2)[::skip,::skip],(compo1['cp_v3']*2)[::skip,::skip])
+ax.quiverkey(q, X=2, Y=2, U=5,label='', labelpos='E')
+ax.gridlines(crs=ccrs.PlateCarree(),draw_labels=True,linestyle='--',linewidth=1,color='gray',alpha=0.5)
+ax.coastlines(resolution='10m')
+states_provinces = cfeature.NaturalEarthFeature(category='cultural',name='admin_1_states_provinces_lines',scale='50m',facecolor='none')
+ax.add_feature(cfeature.LAND)
+ax.add_feature(states_provinces, edgecolor='black')
