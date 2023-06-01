@@ -87,7 +87,7 @@ from cartopy.io.shapereader import Reader
 from cartopy.feature import ShapelyFeature
 import matplotlib.pyplot as plt
 import cartopy.feature as cfeature
-%matplotlib auto
+#%matplotlib auto
 
 componentes['time'] = '2009-12-01 00:00'
 componentes = componentes.set_index(['latitude','longitude','time'])
